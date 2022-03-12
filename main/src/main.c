@@ -13,6 +13,11 @@
 #include "libmaix_disp.h"
 
 // #include "rotate.h"
+#define CAPTURE_IMAGE_WIDTH 480
+#define CAPTURE_IMAGE_HEIGHT 480
+
+char fps_str[32];
+char qrcode_data[256];
 
 #define CALC_FPS(tips)                                                                                     \
   {                                                                                                        \
@@ -27,6 +32,24 @@
       fcnt = 0;                                                                                            \
     }                                                                                                      \
   }
+
+
+#define CALC_FPS_DISPLAY(tips, image)                                                                                     \
+  {                                                                                                        \
+    static int fcnt = 0;                                                                                   \
+    fcnt++;                                                                                                \
+    static struct timespec ts1, ts2;                                                                       \
+    clock_gettime(CLOCK_MONOTONIC, &ts2);                                                                  \
+    if ((ts2.tv_sec * 1000 + ts2.tv_nsec / 1000000) - (ts1.tv_sec * 1000 + ts1.tv_nsec / 1000000) >= 1000) \
+    {                                                                                                      \
+      printf("%s => H26X FPS:%d\n", tips, fcnt);                                                  \
+      snprintf(fps_str, sizeof(char)*32, "FPS: %02d", fcnt);                                            \
+      libmaix_cv_image_draw_string(image, 0, 0, fps_str, 1.5, MaixColor(255, 0, 0), 1);                 \
+      ts1 = ts2;                                                                                           \
+      fcnt = 0;                                                                                            \
+    }                                                                                                      \
+  }
+
 
 #include "sys/time.h"
 
@@ -130,7 +153,7 @@ void test_init() {
 
   libmaix_camera_module_init();
 
-  test.w0 = 480, test.h0 = 480;
+  test.w0 = CAPTURE_IMAGE_WIDTH, test.h0 = CAPTURE_IMAGE_HEIGHT;
 
   test.cam0 = libmaix_cam_create(0, test.w0, test.h0, 1, 0);
   if (NULL == test.cam0) return ;  test.rgb888 = (uint8_t *)malloc(test.w0 * test.h0 * 3);
@@ -217,6 +240,7 @@ static void qrcode_exit()
 static void qrcode_loop(libmaix_image_t* img)
 {
     if (gray) {
+        memset(qrcode_data, 0, sizeof(char)*256);
         libmaix_err_t err = LIBMAIX_ERR_NONE;
 
         libmaix_cv_image_convert(img, LIBMAIX_IMAGE_MODE_GRAY, &gray);
@@ -249,7 +273,8 @@ static void qrcode_loop(libmaix_image_t* img)
                 // libmaix_cv_image_draw_string(img, 0, 0, zbar_get_symbol_name(typ), 1.5, MaixColor(0, 0, 255), 1);
                 // libmaix_cv_image_draw_string(img, 0, 20, data, 1.5, MaixColor(255, 0, 0), 1);
                 printf("decoded %s symbol \"%s\"\n", zbar_get_symbol_name(typ), data);
-                // break;
+                strncpy(qrcode_data, data, sizeof(char)*256);
+                break;
             }
         }
 
@@ -280,9 +305,19 @@ void test_work() {
         if (tmp->width == test.disp->width && test.disp->height == tmp->height) {
             test.disp->draw_image(test.disp, tmp);
         } else {
-            libmaix_image_t *rs = libmaix_image_create(test.disp->width, test.disp->height, LIBMAIX_IMAGE_MODE_RGB888, LIBMAIX_IMAGE_LAYOUT_HWC, NULL, true);
+            int resize_width = test.disp->width;
+            int resize_height = test.disp->width*CAPTURE_IMAGE_HEIGHT/CAPTURE_IMAGE_WIDTH;
+            //printf("resize: w %d h %d \n", resize_width, resize_height);
+            libmaix_image_t *rs = libmaix_image_create(resize_width, resize_height, LIBMAIX_IMAGE_MODE_RGB888, LIBMAIX_IMAGE_LAYOUT_HWC, NULL, true);
             if (rs) {
-                libmaix_cv_image_resize(tmp, test.disp->width, test.disp->height, &rs);
+                libmaix_cv_image_resize(tmp, resize_width, resize_height, &rs);
+
+                libmaix_cv_image_draw_string(rs, 0, 0, fps_str, 1.5, MaixColor(255, 0, 0), 1);
+                CALC_FPS_DISPLAY("maix_cam 0", rs);
+
+                if (strlen(qrcode_data) > 0) {
+                    libmaix_cv_image_draw_string(rs, 0, 190, qrcode_data, 1.5, MaixColor(0, 250, 0), 1);
+                }
                 test.disp->draw_image(test.disp, rs);
                 libmaix_image_destroy(&rs);
             }
